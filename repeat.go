@@ -7,6 +7,7 @@ import (
 	"time"
 )
 
+// daysInMonth(t) возвращает кол-во дней в месяце даты t
 func daysInMonth(t time.Time) int {
 	month := t.Month()
 	days := time.Date(t.Year(), month+1, 0, 0, 0, 0, 0, t.Location()).Day()
