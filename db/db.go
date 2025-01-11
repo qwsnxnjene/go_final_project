@@ -20,7 +20,6 @@ func CreateDB() {
 
 	ActualDbPath = dbPath
 
-	fmt.Println(os.Getwd())
 	// if there is no DB, create one
 	var install bool
 	if err != nil {
