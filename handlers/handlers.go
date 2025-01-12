@@ -1,17 +1,22 @@
 package handlers
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
+	"github.com/golang-jwt/jwt"
 	"github.com/qwsnxnjene/go_final_project/db"
 	_ "modernc.org/sqlite"
 )
 
+// Лимит задач, которые будут возвращаться при поиске
 const TaskLimit = 50
 
 type Task struct {
@@ -22,7 +27,11 @@ type Task struct {
 	Repeat  string `json:"repeat"`
 }
 
+// NextDateHandler() обрабатывает GET-запросы по адресу /api/nextdate
 func NextDateHandler(rw http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		return
+	}
 	date, repeat := r.FormValue("date"), r.FormValue("repeat")
 	now, err := time.Parse("20060102", r.FormValue("now"))
 	if err != nil {
@@ -39,96 +48,21 @@ func NextDateHandler(rw http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func AddTaskHandler(rw http.ResponseWriter, r *http.Request) {
+// TaskHandler() обрабатывает запросы по адресу /api/task
+func TaskHandler(rw http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
-		rw.Header().Set("Content-Type", "application/json; charset=UTF-8")
-
-		decoder := json.NewDecoder(r.Body)
-		var t Task
-		err := decoder.Decode(&t)
-		if err != nil {
-
-			rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`,
-				fmt.Errorf("ошибка десериализации %v", err).Error())))
-			return
-		}
-		defer r.Body.Close()
-
-		date, title, comment, repeat := t.Date, t.Title, t.Comment, t.Repeat
-
-		if len(title) == 0 {
-
-			rw.Write([]byte(`{"error":"заголовок не может быть пустым"}`))
-			return
-		}
-
-		if len(date) == 0 {
-			date = time.Now().Format("20060102")
-		}
-
-		dateTo, err := time.Parse("20060102", date)
-		if err != nil {
-
-			rw.Write([]byte(`{"error":"некорректная дата"}`))
-			return
-		}
-
-		newDate := ""
-		if len(repeat) > 0 {
-			newDate, err = NextDate(time.Now(), date, repeat)
-			if err != nil {
-
-				rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, err.Error())))
-				return
-			}
-			if timeDiff(time.Now(), dateTo) {
-				date = newDate
-			}
-		}
-
-		//если дата меньше сегодняшнего числа
-		if timeDiff(time.Now(), dateTo) {
-			date = time.Now().Format("20060102")
-		}
-
-		database, err := db.OpenSql()
-		if err != nil {
-
-			rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
-			return
-		}
-
-		defer database.Close()
-
-		query := `INSERT INTO scheduler (date, title, comment, repeat) VALUES (:date, :title, :comment, :repeat)`
-		res, err := database.Exec(query,
-			sql.Named("date", date),
-			sql.Named("title", title),
-			sql.Named("comment", comment),
-			sql.Named("repeat", repeat),
-		)
-		if err != nil {
-
-			rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
-			return
-		}
-		idToAdd, err := res.LastInsertId()
-		if err != nil {
-
-			rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
-			return
-		}
-
-		rw.WriteHeader(http.StatusOK)
-		rw.Write([]byte(fmt.Sprintf(`{"id":"%d"}`, idToAdd)))
+		addTaskHandler(rw, r)
 	case http.MethodGet:
-		TaskByIdHandler(rw, r)
+		taskByIdHandler(rw, r)
 	case http.MethodPut:
-		UpdateTaskHandler(rw, r)
+		updateTaskHandler(rw, r)
+	case http.MethodDelete:
+		deleteTaskHandler(rw, r)
 	}
 }
 
+// TasksHandler() обрабатывает GET-запросы по адресу /api/tasks
 func TasksHandler(rw http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		return
@@ -205,8 +139,9 @@ func TasksHandler(rw http.ResponseWriter, r *http.Request) {
 	rw.Write(data)
 }
 
-func TaskByIdHandler(rw http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+// TaskDoneHandler() обрабатывает POST-запросы по адресу /api/task/done
+func TaskDoneHandler(rw http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
 		return
 	}
 	rw.Header().Set("Content-Type", "application/json; charset=UTF-8")
@@ -244,22 +179,61 @@ func TaskByIdHandler(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := json.Marshal(task)
-	if err != nil {
-		rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка сериализации %v", err).Error())))
-		return
+	if len(task.Repeat) == 0 {
+		query := `DELETE FROM scheduler WHERE id = :id`
+		res, err := dB.Exec(query, sql.Named("id", id))
+		if err != nil {
+			rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
+			return
+		}
+		if rows, err := res.RowsAffected(); err != nil {
+			rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
+			return
+		} else if rows == 0 {
+			rw.Write([]byte(`{"error":"задача не найдена"}`))
+			return
+		}
+	} else {
+		nextDate, err := NextDate(time.Now(), task.Date, task.Repeat)
+		if err != nil {
+			rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка обновления даты %v", err).Error())))
+			return
+		}
+
+		query := `UPDATE scheduler SET date = :date WHERE id = :id`
+		res, err := dB.Exec(query,
+			sql.Named("id", id),
+			sql.Named("date", nextDate),
+		)
+		if err != nil {
+			rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
+			return
+		}
+		if rows, err := res.RowsAffected(); err != nil {
+			rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
+			return
+		} else if rows == 0 {
+			rw.Write([]byte(`{"error":"задача не найдена"}`))
+			return
+		}
 	}
 
 	rw.WriteHeader(http.StatusOK)
-	rw.Write(data)
+	rw.Write([]byte(`{}`))
 }
 
-func UpdateTaskHandler(rw http.ResponseWriter, r *http.Request) {
+// SignInHandler() обрабатывает POST-запросы по адресу /api/signin
+func SignInHandler(rw http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		return
+	}
 	rw.Header().Set("Content-Type", "application/json; charset=UTF-8")
 
-	decoder := json.NewDecoder(r.Body)
-	var t Task
-	err := decoder.Decode(&t)
+	var p struct {
+		Password string `json:"password"`
+	}
+
+	err := json.NewDecoder(r.Body).Decode(&p)
 	if err != nil {
 		rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`,
 			fmt.Errorf("ошибка десериализации %v", err).Error())))
@@ -267,69 +241,28 @@ func UpdateTaskHandler(rw http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	id, date, title, comment, repeat := t.ID, t.Date, t.Title, t.Comment, t.Repeat
+	var ans string
+	if p.Password == os.Getenv("TODO_PASSWORD") {
+		secret := []byte(os.Getenv("TODO_PASSWORD"))
 
-	if len(title) == 0 {
-		rw.Write([]byte(`{"error":"заголовок не может быть пустым"}`))
-		return
-	}
+		hash := sha256.Sum256([]byte(os.Getenv("TODO_PASSWORD")))
 
-	if len(date) == 0 {
-		date = time.Now().Format("20060102")
-	}
+		claims := jwt.MapClaims{
+			"hash": hex.EncodeToString(hash[:]),
+		}
 
-	dateTo, err := time.Parse("20060102", date)
-	if err != nil {
-		rw.Write([]byte(`{"error":"некорректная дата"}`))
-		return
-	}
-
-	newDate := ""
-	if len(repeat) > 0 {
-		newDate, err = NextDate(time.Now(), date, repeat)
+		jwtToken := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+		signedToken, err := jwtToken.SignedString(secret)
 		if err != nil {
-
-			rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, err.Error())))
+			rw.Write([]byte(fmt.Errorf("failed to sign jwt: %s", err).Error()))
 			return
 		}
-		if timeDiff(time.Now(), dateTo) {
-			date = newDate
-		}
-	}
 
-	//если дата меньше сегодняшнего числа
-	if timeDiff(time.Now(), dateTo) {
-		date = time.Now().Format("20060102")
+		ans = fmt.Sprintf(`{"token":"%v"}`, signedToken)
+		rw.WriteHeader(http.StatusOK)
+		fmt.Println(signedToken)
+	} else {
+		ans = `{"error":"Неверный пароль"}`
 	}
-
-	database, err := db.OpenSql()
-	if err != nil {
-		rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
-		return
-	}
-
-	defer database.Close()
-
-	query := `UPDATE scheduler SET date = :date, title = :title, comment = :comment, repeat = :repeat WHERE id = :id`
-	res, err := database.Exec(query,
-		sql.Named("date", date),
-		sql.Named("title", title),
-		sql.Named("comment", comment),
-		sql.Named("repeat", repeat),
-		sql.Named("id", id),
-	)
-	if err != nil {
-		rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
-		return
-	}
-	if rows, err := res.RowsAffected(); err != nil {
-		rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
-		return
-	} else if rows == 0 {
-		rw.Write([]byte(`{"error":"задача не найдена"}`))
-		return
-	}
-
-	rw.WriteHeader(http.StatusOK)
-	rw.Write([]byte(`{}`))
+	rw.Write([]byte(ans))
 }

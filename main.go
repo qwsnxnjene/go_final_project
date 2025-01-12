@@ -7,11 +7,14 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/joho/godotenv"
+	"github.com/qwsnxnjene/go_final_project/authorization"
 	"github.com/qwsnxnjene/go_final_project/db"
 	"github.com/qwsnxnjene/go_final_project/handlers"
 	"github.com/qwsnxnjene/go_final_project/tests"
 )
 
+// startServer() обеспечивает начало работы сервера, создание БД и настройку API
 func startServer() {
 	ports := ":" + strconv.Itoa(tests.Port)
 	webDir := "./web"
@@ -20,14 +23,21 @@ func startServer() {
 		ports = ":" + p
 	}
 
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("ошибка загрузки .env файла")
+	}
+
 	db.CreateDB()
 
 	http.Handle("/", http.FileServer(http.Dir(webDir)))
 	http.HandleFunc("/api/nextdate", handlers.NextDateHandler)
-	http.HandleFunc("/api/task", handlers.AddTaskHandler)
-	http.HandleFunc("/api/tasks", handlers.TasksHandler)
+	http.HandleFunc("/api/task", authorization.Auth(handlers.TaskHandler))
+	http.HandleFunc("/api/tasks", authorization.Auth(handlers.TasksHandler))
+	http.HandleFunc("/api/task/done", authorization.Auth(handlers.TaskDoneHandler))
+	http.HandleFunc("/api/signin", handlers.SignInHandler)
 
-	err := http.ListenAndServe(ports, nil)
+	err = http.ListenAndServe(ports, nil)
 	if err != nil {
 		log.Fatal(fmt.Errorf("can't start a server: %v", err))
 		return

@@ -11,6 +11,7 @@ import (
 
 var ActualDbPath string
 
+// CreateDB() получает путь к файлу с базой данных и, если необходимо, создаёт таблицу
 func CreateDB() {
 	dbPath := tests.DBFile
 	if path := os.Getenv("TODO_DBFILE"); path != "" {
@@ -30,6 +31,8 @@ func CreateDB() {
 	}
 }
 
+// CreateTable(path) создаёт таблицу в файле, указанном в path
+// возвращает nil при успешном создании таблицы, иначе ошибку
 func CreateTable(path string) error {
 	db, err := sql.Open("sqlite", path)
 
@@ -56,6 +59,7 @@ func CreateTable(path string) error {
 	return nil
 }
 
+// OpenSql() возвращает таблицу для работы с ней
 func OpenSql() (*sql.DB, error) {
 	db, err := sql.Open("sqlite", ActualDbPath)
 	if err != nil {

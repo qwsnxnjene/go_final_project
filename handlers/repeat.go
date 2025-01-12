@@ -36,6 +36,8 @@ func timeDiff(first, sec time.Time) bool {
 	}
 }
 
+// NextDate(now, date, repeat) возвращает следующую от date дату по правилу repeat
+// гарантируется, что при этом новая дата будет больше указанной в now
 func NextDate(now time.Time, date string, repeat string) (string, error) {
 	if len(repeat) == 0 {
 		return "", fmt.Errorf("[NextDate]: repeat rule can't be empty")
