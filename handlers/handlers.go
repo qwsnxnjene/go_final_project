@@ -11,6 +11,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+const TaskLimit = 50
+
 type Task struct {
 	ID      string `json:"id"`
 	Date    string `json:"date"`
@@ -128,6 +130,8 @@ func TasksHandler(rw http.ResponseWriter, r *http.Request) {
 	}
 	rw.Header().Set("Content-Type", "application/json; charset=UTF-8")
 
+	toSearch := r.FormValue("search")
+
 	tasks := []Task{}
 	dB, err := db.OpenSql()
 
@@ -136,13 +140,39 @@ func TasksHandler(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer dB.Close()
-	query := `SELECT id, date, title, comment, repeat FROM scheduler ORDER BY date LIMIT 50`
-	rows, err := dB.Query(query)
-	if err != nil {
-		rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
-		return
+	var query string
+	var rows *sql.Rows
+	if len(toSearch) == 0 {
+		query = `SELECT id, date, title, comment, repeat FROM scheduler ORDER BY date LIMIT :limit`
+		rows, err = dB.Query(query, sql.Named("limit", TaskLimit))
+		if err != nil {
+			rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
+			return
+		}
+		defer rows.Close()
+	} else {
+		searchTime, err := time.Parse("02.01.2006", toSearch)
+		if err != nil {
+			//значит запрос не временной
+			query = `SELECT * FROM scheduler WHERE title LIKE :search OR comment LIKE :search ORDER BY date LIMIT :limit`
+			rows, err = dB.Query(query, sql.Named("limit", TaskLimit), sql.Named("search", "%"+toSearch+"%"))
+			if err != nil {
+				rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
+				return
+			}
+			defer rows.Close()
+		} else {
+			timeToFind := searchTime.Format("20060102")
+			query = `SELECT * FROM scheduler WHERE date = :date LIMIT :limit`
+			rows, err = dB.Query(query, sql.Named("limit", TaskLimit), sql.Named("date", timeToFind))
+			if err != nil {
+				rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
+				return
+			}
+			defer rows.Close()
+		}
+
 	}
-	defer rows.Close()
 
 	for rows.Next() {
 		var t Task
@@ -162,12 +192,9 @@ func TasksHandler(rw http.ResponseWriter, r *http.Request) {
 	jsonTask.Tasks = tasks
 	data, err := json.Marshal(jsonTask)
 	if err != nil {
-		fmt.Println("goal")
 		rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка сериализации %v", err).Error())))
 		return
 	}
-
-	fmt.Println(string(data))
 
 	rw.WriteHeader(http.StatusOK)
 	rw.Write(data)
