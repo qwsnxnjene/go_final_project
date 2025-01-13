@@ -29,6 +29,7 @@ func startServer() {
 	}
 
 	db.CreateDB()
+	defer db.Database.Close()
 
 	http.Handle("/", http.FileServer(http.Dir(webDir)))
 	http.HandleFunc("/api/nextdate", handlers.NextDateHandler)

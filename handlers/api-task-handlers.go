@@ -15,27 +15,24 @@ import (
 // taskByIdHandler() обрабатывает GET-запросы по адресу /api/task
 func taskByIdHandler(rw http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
+		rw.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	rw.Header().Set("Content-Type", "application/json; charset=UTF-8")
 
 	id := r.FormValue("id")
 	if len(id) == 0 {
+		rw.WriteHeader(http.StatusBadRequest)
 		rw.Write([]byte((`{"error":"не указан идентификатор"}`)))
 		return
 	}
 
-	dB, err := db.OpenSql()
-
-	if err != nil {
-		rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
-		return
-	}
-	defer dB.Close()
+	dB := db.Database
 
 	idInt, err := strconv.Atoi(id)
 	if err != nil {
-		rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с id %v", err).Error())))
+		rw.WriteHeader(http.StatusBadRequest)
+		rw.Write([]byte(fmt.Sprintf(`{"error":"ошибка работы с БД %v"}`, err)))
 		return
 	}
 	query := `SELECT id, date, title, comment, repeat FROM scheduler WHERE id = :id`
@@ -45,16 +42,19 @@ func taskByIdHandler(rw http.ResponseWriter, r *http.Request) {
 	err = row.Scan(&task.ID, &task.Date, &task.Title, &task.Comment, &task.Repeat)
 	if err != nil {
 		if err == sql.ErrNoRows {
+			rw.WriteHeader(http.StatusBadRequest)
 			rw.Write([]byte(`{"error":"запись не найдена"}`))
 			return
 		}
-		rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
+		rw.WriteHeader(http.StatusBadRequest)
+		rw.Write([]byte(fmt.Sprintf(`{"error":"ошибка работы с БД %v"}`, err)))
 		return
 	}
 
 	data, err := json.Marshal(task)
 	if err != nil {
-		rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка сериализации %v", err).Error())))
+		rw.WriteHeader(http.StatusBadRequest)
+		rw.Write([]byte(fmt.Sprintf(`{"error":"ошибка сериализации %v"}`, err)))
 		return
 	}
 
@@ -70,8 +70,8 @@ func updateTaskHandler(rw http.ResponseWriter, r *http.Request) {
 	var t Task
 	err := decoder.Decode(&t)
 	if err != nil {
-		rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`,
-			fmt.Errorf("ошибка десериализации %v", err).Error())))
+		rw.WriteHeader(http.StatusBadRequest)
+		rw.Write([]byte(fmt.Sprintf(`{"error":"ошибка десериализации %v"}`, err)))
 		return
 	}
 	defer r.Body.Close()
@@ -79,6 +79,7 @@ func updateTaskHandler(rw http.ResponseWriter, r *http.Request) {
 	id, date, title, comment, repeat := t.ID, t.Date, t.Title, t.Comment, t.Repeat
 
 	if len(title) == 0 {
+		rw.WriteHeader(http.StatusBadRequest)
 		rw.Write([]byte(`{"error":"заголовок не может быть пустым"}`))
 		return
 	}
@@ -89,6 +90,7 @@ func updateTaskHandler(rw http.ResponseWriter, r *http.Request) {
 
 	dateTo, err := time.Parse("20060102", date)
 	if err != nil {
+		rw.WriteHeader(http.StatusBadRequest)
 		rw.Write([]byte(`{"error":"некорректная дата"}`))
 		return
 	}
@@ -97,8 +99,8 @@ func updateTaskHandler(rw http.ResponseWriter, r *http.Request) {
 	if len(repeat) > 0 {
 		newDate, err = NextDate(time.Now(), date, repeat)
 		if err != nil {
-
-			rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, err.Error())))
+			rw.WriteHeader(http.StatusBadRequest)
+			rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, err)))
 			return
 		}
 		if timeDiff(time.Now(), dateTo) {
@@ -111,16 +113,10 @@ func updateTaskHandler(rw http.ResponseWriter, r *http.Request) {
 		date = time.Now().Format("20060102")
 	}
 
-	database, err := db.OpenSql()
-	if err != nil {
-		rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
-		return
-	}
-
-	defer database.Close()
+	dB := db.Database
 
 	query := `UPDATE scheduler SET date = :date, title = :title, comment = :comment, repeat = :repeat WHERE id = :id`
-	res, err := database.Exec(query,
+	res, err := dB.Exec(query,
 		sql.Named("date", date),
 		sql.Named("title", title),
 		sql.Named("comment", comment),
@@ -128,13 +124,16 @@ func updateTaskHandler(rw http.ResponseWriter, r *http.Request) {
 		sql.Named("id", id),
 	)
 	if err != nil {
-		rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
+		rw.WriteHeader(http.StatusBadRequest)
+		rw.Write([]byte(fmt.Sprintf(`{"error":"ошибка работы с БД %v"}`, err)))
 		return
 	}
 	if rows, err := res.RowsAffected(); err != nil {
-		rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
+		rw.WriteHeader(http.StatusBadRequest)
+		rw.Write([]byte(fmt.Sprintf(`{"error":"ошибка работы с БД %v"}`, err)))
 		return
 	} else if rows == 0 {
+		rw.WriteHeader(http.StatusBadRequest)
 		rw.Write([]byte(`{"error":"задача не найдена"}`))
 		return
 	}
@@ -149,28 +148,26 @@ func deleteTaskHandler(rw http.ResponseWriter, r *http.Request) {
 
 	id := r.FormValue("id")
 	if len(id) == 0 {
+		rw.WriteHeader(http.StatusBadRequest)
 		rw.Write([]byte(`{"error":"не указан идентификатор"}`))
 		return
 	}
 
-	dB, err := db.OpenSql()
-
-	if err != nil {
-		rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
-		return
-	}
-	defer dB.Close()
+	dB := db.Database
 
 	query := `DELETE FROM scheduler WHERE id = :id`
 	res, err := dB.Exec(query, sql.Named("id", id))
 	if err != nil {
-		rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
+		rw.WriteHeader(http.StatusBadRequest)
+		rw.Write([]byte(fmt.Sprintf(`{"error":"ошибка работы с БД %v"}`, err)))
 		return
 	}
 	if rows, err := res.RowsAffected(); err != nil {
-		rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
+		rw.WriteHeader(http.StatusBadRequest)
+		rw.Write([]byte(fmt.Sprintf(`{"error":"ошибка работы с БД %v"}`, err)))
 		return
 	} else if rows == 0 {
+		rw.WriteHeader(http.StatusBadRequest)
 		rw.Write([]byte(`{"error":"задача не найдена"}`))
 		return
 	}
@@ -187,9 +184,8 @@ func addTaskHandler(rw http.ResponseWriter, r *http.Request) {
 	var t Task
 	err := decoder.Decode(&t)
 	if err != nil {
-
-		rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`,
-			fmt.Errorf("ошибка десериализации %v", err).Error())))
+		rw.WriteHeader(http.StatusBadRequest)
+		rw.Write([]byte(fmt.Sprintf(`{"error":"ошибка десериализации %v"}`, err)))
 		return
 	}
 	defer r.Body.Close()
@@ -197,7 +193,7 @@ func addTaskHandler(rw http.ResponseWriter, r *http.Request) {
 	date, title, comment, repeat := t.Date, t.Title, t.Comment, t.Repeat
 
 	if len(title) == 0 {
-
+		rw.WriteHeader(http.StatusBadRequest)
 		rw.Write([]byte(`{"error":"заголовок не может быть пустым"}`))
 		return
 	}
@@ -208,7 +204,7 @@ func addTaskHandler(rw http.ResponseWriter, r *http.Request) {
 
 	dateTo, err := time.Parse("20060102", date)
 	if err != nil {
-
+		rw.WriteHeader(http.StatusBadRequest)
 		rw.Write([]byte(`{"error":"некорректная дата"}`))
 		return
 	}
@@ -217,7 +213,7 @@ func addTaskHandler(rw http.ResponseWriter, r *http.Request) {
 	if len(repeat) > 0 {
 		newDate, err = NextDate(time.Now(), date, repeat)
 		if err != nil {
-
+			rw.WriteHeader(http.StatusBadRequest)
 			rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, err.Error())))
 			return
 		}
@@ -231,31 +227,24 @@ func addTaskHandler(rw http.ResponseWriter, r *http.Request) {
 		date = time.Now().Format("20060102")
 	}
 
-	database, err := db.OpenSql()
-	if err != nil {
-
-		rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
-		return
-	}
-
-	defer database.Close()
+	dB := db.Database
 
 	query := `INSERT INTO scheduler (date, title, comment, repeat) VALUES (:date, :title, :comment, :repeat)`
-	res, err := database.Exec(query,
+	res, err := dB.Exec(query,
 		sql.Named("date", date),
 		sql.Named("title", title),
 		sql.Named("comment", comment),
 		sql.Named("repeat", repeat),
 	)
 	if err != nil {
-
-		rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
+		rw.WriteHeader(http.StatusBadRequest)
+		rw.Write([]byte(fmt.Sprintf(`{"error":"ошибка работы с БД %v"}`, err)))
 		return
 	}
 	idToAdd, err := res.LastInsertId()
 	if err != nil {
-
-		rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
+		rw.WriteHeader(http.StatusBadRequest)
+		rw.Write([]byte(fmt.Sprintf(`{"error":"ошибка работы с БД %v"}`, err)))
 		return
 	}
 
