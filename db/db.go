@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"os"
 
 	"github.com/qwsnxnjene/go_final_project/tests"
@@ -10,6 +11,7 @@ import (
 )
 
 var ActualDbPath string
+var Database *sql.DB
 
 // CreateDB() получает путь к файлу с базой данных и, если необходимо, создаёт таблицу
 func CreateDB() {
@@ -29,6 +31,11 @@ func CreateDB() {
 	if install {
 		CreateTable(dbPath)
 	}
+
+	_, err = OpenSql()
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 // CreateTable(path) создаёт таблицу в файле, указанном в path
@@ -37,8 +44,7 @@ func CreateTable(path string) error {
 	db, err := sql.Open("sqlite", path)
 
 	if err != nil {
-		fmt.Println(err.Error())
-		return fmt.Errorf("[db.CreateTable]: can't open database: %v", err)
+		return fmt.Errorf("[db.CreateTable]: can't open database: %w", err)
 	}
 	createQuery := `
 	CREATE TABLE scheduler (
@@ -53,8 +59,7 @@ func CreateTable(path string) error {
 
 	_, err = db.Exec(createQuery)
 	if err != nil {
-		fmt.Println(err.Error())
-		return fmt.Errorf("[db.CreateTable]: can't create table: %v", err)
+		return fmt.Errorf("[db.CreateTable]: can't create table: %w", err)
 	}
 	return nil
 }
@@ -63,9 +68,10 @@ func CreateTable(path string) error {
 func OpenSql() (*sql.DB, error) {
 	db, err := sql.Open("sqlite", ActualDbPath)
 	if err != nil {
-		fmt.Println(err.Error())
-		return nil, fmt.Errorf("[db.CreateTable]: can't open database: %v", err)
+		return nil, fmt.Errorf("[db.CreateTable]: can't open database: %w", err)
 	}
+
+	Database = db
 
 	return db, nil
 }

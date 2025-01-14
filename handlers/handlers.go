@@ -65,6 +65,7 @@ func TaskHandler(rw http.ResponseWriter, r *http.Request) {
 // TasksHandler() обрабатывает GET-запросы по адресу /api/tasks
 func TasksHandler(rw http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
+		rw.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	rw.Header().Set("Content-Type", "application/json; charset=UTF-8")
@@ -72,20 +73,15 @@ func TasksHandler(rw http.ResponseWriter, r *http.Request) {
 	toSearch := r.FormValue("search")
 
 	tasks := []Task{}
-	dB, err := db.OpenSql()
-
-	if err != nil {
-		rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
-		return
-	}
-	defer dB.Close()
+	dB := db.Database
 	var query string
 	var rows *sql.Rows
 	if len(toSearch) == 0 {
 		query = `SELECT id, date, title, comment, repeat FROM scheduler ORDER BY date LIMIT :limit`
-		rows, err = dB.Query(query, sql.Named("limit", TaskLimit))
+		rows, err := dB.Query(query, sql.Named("limit", TaskLimit))
 		if err != nil {
-			rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
+			rw.WriteHeader(http.StatusBadRequest)
+			rw.Write([]byte(fmt.Sprintf(`{"error":"ошибка работы с БД %v"}`, err)))
 			return
 		}
 		defer rows.Close()
@@ -96,7 +92,8 @@ func TasksHandler(rw http.ResponseWriter, r *http.Request) {
 			query = `SELECT * FROM scheduler WHERE title LIKE :search OR comment LIKE :search ORDER BY date LIMIT :limit`
 			rows, err = dB.Query(query, sql.Named("limit", TaskLimit), sql.Named("search", "%"+toSearch+"%"))
 			if err != nil {
-				rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
+				rw.WriteHeader(http.StatusBadRequest)
+				rw.Write([]byte(fmt.Sprintf(`{"error":"ошибка работы с БД %v"}`, err)))
 				return
 			}
 			defer rows.Close()
@@ -105,7 +102,8 @@ func TasksHandler(rw http.ResponseWriter, r *http.Request) {
 			query = `SELECT * FROM scheduler WHERE date = :date LIMIT :limit`
 			rows, err = dB.Query(query, sql.Named("limit", TaskLimit), sql.Named("date", timeToFind))
 			if err != nil {
-				rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
+				rw.WriteHeader(http.StatusBadRequest)
+				rw.Write([]byte(fmt.Sprintf(`{"error":"ошибка работы с БД %v"}`, err)))
 				return
 			}
 			defer rows.Close()
@@ -118,10 +116,17 @@ func TasksHandler(rw http.ResponseWriter, r *http.Request) {
 
 		err := rows.Scan(&t.ID, &t.Date, &t.Title, &t.Comment, &t.Repeat)
 		if err != nil {
-			rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
+			rw.WriteHeader(http.StatusBadRequest)
+			rw.Write([]byte(fmt.Sprintf(`{"error":"ошибка работы с БД %v"}`, err)))
 			return
 		}
 		tasks = append(tasks, t)
+	}
+	err := rows.Err()
+	if err != nil {
+		rw.WriteHeader(http.StatusBadRequest)
+		rw.Write([]byte(fmt.Sprintf(`{"error":"ошибка работы с БД %v"}`, err)))
+		return
 	}
 
 	var jsonTask struct {
@@ -131,7 +136,8 @@ func TasksHandler(rw http.ResponseWriter, r *http.Request) {
 	jsonTask.Tasks = tasks
 	data, err := json.Marshal(jsonTask)
 	if err != nil {
-		rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка сериализации %v", err).Error())))
+		rw.WriteHeader(http.StatusBadRequest)
+		rw.Write([]byte(fmt.Sprintf(`{"error":"ошибка сериализации %v"}`, err)))
 		return
 	}
 
@@ -142,27 +148,24 @@ func TasksHandler(rw http.ResponseWriter, r *http.Request) {
 // TaskDoneHandler() обрабатывает POST-запросы по адресу /api/task/done
 func TaskDoneHandler(rw http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
+		rw.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	rw.Header().Set("Content-Type", "application/json; charset=UTF-8")
 
 	id := r.FormValue("id")
 	if len(id) == 0 {
+		rw.WriteHeader(http.StatusBadRequest)
 		rw.Write([]byte((`{"error":"не указан идентификатор"}`)))
 		return
 	}
 
-	dB, err := db.OpenSql()
-
-	if err != nil {
-		rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
-		return
-	}
-	defer dB.Close()
+	dB := db.Database
 
 	idInt, err := strconv.Atoi(id)
 	if err != nil {
-		rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с id %v", err).Error())))
+		rw.WriteHeader(http.StatusBadRequest)
+		rw.Write([]byte(fmt.Sprintf(`{"error":"ошибка работы с id %v"}`, err)))
 		return
 	}
 	query := `SELECT id, date, title, comment, repeat FROM scheduler WHERE id = :id`
@@ -172,10 +175,12 @@ func TaskDoneHandler(rw http.ResponseWriter, r *http.Request) {
 	err = row.Scan(&task.ID, &task.Date, &task.Title, &task.Comment, &task.Repeat)
 	if err != nil {
 		if err == sql.ErrNoRows {
+			rw.WriteHeader(http.StatusBadRequest)
 			rw.Write([]byte(`{"error":"запись не найдена"}`))
 			return
 		}
-		rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
+		rw.WriteHeader(http.StatusBadRequest)
+		rw.Write([]byte(fmt.Sprintf(`{"error":"ошибка работы с БД %v"}`, err)))
 		return
 	}
 
@@ -183,20 +188,24 @@ func TaskDoneHandler(rw http.ResponseWriter, r *http.Request) {
 		query := `DELETE FROM scheduler WHERE id = :id`
 		res, err := dB.Exec(query, sql.Named("id", id))
 		if err != nil {
-			rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
+			rw.WriteHeader(http.StatusBadRequest)
+			rw.Write([]byte(fmt.Sprintf(`{"error":"ошибка работы с БД %v"}`, err)))
 			return
 		}
 		if rows, err := res.RowsAffected(); err != nil {
-			rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
+			rw.WriteHeader(http.StatusBadRequest)
+			rw.Write([]byte(fmt.Sprintf(`{"error":"ошибка работы с БД %v"}`, err)))
 			return
 		} else if rows == 0 {
+			rw.WriteHeader(http.StatusBadRequest)
 			rw.Write([]byte(`{"error":"задача не найдена"}`))
 			return
 		}
 	} else {
 		nextDate, err := NextDate(time.Now(), task.Date, task.Repeat)
 		if err != nil {
-			rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка обновления даты %v", err).Error())))
+			rw.WriteHeader(http.StatusBadRequest)
+			rw.Write([]byte(fmt.Sprintf(`{"error":"ошибка работы с датой %v"}`, err)))
 			return
 		}
 
@@ -206,13 +215,16 @@ func TaskDoneHandler(rw http.ResponseWriter, r *http.Request) {
 			sql.Named("date", nextDate),
 		)
 		if err != nil {
-			rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
+			rw.WriteHeader(http.StatusBadRequest)
+			rw.Write([]byte(fmt.Sprintf(`{"error":"ошибка работы с БД %v"}`, err)))
 			return
 		}
 		if rows, err := res.RowsAffected(); err != nil {
-			rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`, fmt.Errorf("ошибка работы с БД %v", err).Error())))
+			rw.WriteHeader(http.StatusBadRequest)
+			rw.Write([]byte(fmt.Sprintf(`{"error":"ошибка работы с БД %v"}`, err)))
 			return
 		} else if rows == 0 {
+			rw.WriteHeader(http.StatusBadRequest)
 			rw.Write([]byte(`{"error":"задача не найдена"}`))
 			return
 		}
@@ -225,6 +237,7 @@ func TaskDoneHandler(rw http.ResponseWriter, r *http.Request) {
 // SignInHandler() обрабатывает POST-запросы по адресу /api/signin
 func SignInHandler(rw http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
+		rw.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	rw.Header().Set("Content-Type", "application/json; charset=UTF-8")
@@ -235,8 +248,8 @@ func SignInHandler(rw http.ResponseWriter, r *http.Request) {
 
 	err := json.NewDecoder(r.Body).Decode(&p)
 	if err != nil {
-		rw.Write([]byte(fmt.Sprintf(`{"error":"%v"}`,
-			fmt.Errorf("ошибка десериализации %v", err).Error())))
+		rw.WriteHeader(http.StatusBadRequest)
+		rw.Write([]byte(fmt.Sprintf(`{"error":"ошибка десериализации %v"}`, err)))
 		return
 	}
 	defer r.Body.Close()
@@ -254,6 +267,7 @@ func SignInHandler(rw http.ResponseWriter, r *http.Request) {
 		jwtToken := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 		signedToken, err := jwtToken.SignedString(secret)
 		if err != nil {
+			rw.WriteHeader(http.StatusBadRequest)
 			rw.Write([]byte(fmt.Errorf("failed to sign jwt: %s", err).Error()))
 			return
 		}
@@ -262,6 +276,7 @@ func SignInHandler(rw http.ResponseWriter, r *http.Request) {
 		rw.WriteHeader(http.StatusOK)
 		fmt.Println(signedToken)
 	} else {
+		rw.WriteHeader(http.StatusBadRequest)
 		ans = `{"error":"Неверный пароль"}`
 	}
 	rw.Write([]byte(ans))

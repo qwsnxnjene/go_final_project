@@ -46,7 +46,6 @@ func Auth(next http.HandlerFunc) http.HandlerFunc {
 			}
 
 			if !valid {
-				fmt.Println("lol")
 				// возвращаем ошибку авторизации 401
 				http.Error(w, "Authentification required", http.StatusUnauthorized)
 				return
