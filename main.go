@@ -37,12 +37,13 @@ func startServer() {
 	http.HandleFunc("/api/tasks", authorization.Auth(handlers.TasksHandler))
 	http.HandleFunc("/api/task/done", authorization.Auth(handlers.TaskDoneHandler))
 	http.HandleFunc("/api/signin", handlers.SignInHandler)
-
+	fmt.Printf("Сервер запущен на порте %v\n", ports)
 	err = http.ListenAndServe(ports, nil)
 	if err != nil {
 		log.Fatal(fmt.Errorf("can't start a server: %v", err))
 		return
 	}
+
 }
 
 func main() {
